@@ -134,10 +134,6 @@ export const getLookupApps = (decision?: ChatDecision | null): ChatLookupApp[] =
 export const getOpsResponse = (decision?: ChatDecision | null): BackendJson =>
   findInResult(getResult(decision), (v) => !Array.isArray(v) && ('operations_applied' in v || 'id_mapping' in v || 'failed_at_op' in v));
 
-/**
- * Color in the agent's replies (AgentChatView only, never the shared markdown renderer).
- * The agent writes GitHub-style alerts ("> [!ERROR]") and statuses in backticks ("`FAILED`").
- */
 export type AgentTone = 'error' | 'warning' | 'success' | 'note';
 
 const CALLOUT_TONES: Record<string, AgentTone> = {
@@ -147,7 +143,6 @@ const CALLOUT_TONES: Record<string, AgentTone> = {
   NOTE: 'note', INFO: 'note', TIP: 'note',
 };
 
-/** "[!ERROR] text" at the start of a quote: its tone and the text after the marker. */
 export const getCalloutTone = (text: string): { tone: AgentTone; rest: string } | null => {
   const match = /^\s*\[!([A-Za-z]+)\][ \t]*/.exec(text || '');
   const tone = match ? CALLOUT_TONES[match[1].toUpperCase()] : undefined;
@@ -163,7 +158,7 @@ export const getStatusTone = (text: string): Exclude<AgentTone, 'note'> | null =
   return null;
 };
 
-/** An agent revert_workflow that changed the workflow. Dry runs and no-ops have no reverted_to. */
+/** Dry runs and no-ops have no reverted_to. */
 export const isAppliedRevert = (decision?: ChatDecision | null): boolean =>
   isAction(decision, 'revert_workflow') && !!findInResult(getResult(decision), (v) => !Array.isArray(v) && 'reverted_to' in v);
 
@@ -309,8 +304,7 @@ export const getAppsNeedingAuth = (decisions: ChatDecision[]): { id: string; nam
       }
     }
   }
-  // Once the agent has built the workflow, only apps it actually uses need credentials,
-  // not every app it looked up and passed over
+  // Only apps the built workflow uses, not every app the agent looked up
   const lastUpdate = [...decisions].reverse().find((decision) => isAction(decision, 'put_agent_update') && getOpsResponse(decision)?.workflow);
   const workflow = getOpsResponse(lastUpdate)?.workflow;
   if (!workflow) return Object.values(byId);
@@ -331,7 +325,6 @@ export const pickRevisionBefore = (revisions: BackendJson[], startedAt: number):
   return best;
 };
 
-/** What reverting to `until` (unix seconds) undoes: every agent edit that finished after it. */
 export const getChangesAfter = (decisions: ChatDecision[], labels: Record<string, string>, until: number): string[] =>
   decisions
     .filter((decision) => isAction(decision, 'put_agent_update') && getStepStatus(decision) === 'done' && toSeconds(decision.run_details?.completed_at) > until)
