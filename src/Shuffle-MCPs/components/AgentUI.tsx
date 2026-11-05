@@ -121,7 +121,8 @@ import { getToolsForSkill, AGENT_TOOLS_CHANGED_EVENT } from '@/lib/agentTools';
 
 import { useAgentPromptPrefix } from '@/Shuffle-MCPs/useAgentPromptPrefix';
 import { runAgent, resolveAgentNodeId } from '@/Shuffle-MCPs/agentRun';
-import AgentChatView from '@/Shuffle-MCPs/components/AgentChatView';
+import AgentChatView, { readMode as readChatMode } from '@/Shuffle-MCPs/components/AgentChatView';
+import { ASK_FIRST_PREFIX } from '@/Shuffle-MCPs/agentChat';
 import { toast } from '@/Shuffle-Core/toast';
 import { getPopupZIndex } from '@/Shuffle-Core/drawerLayer';
 import { useShuffleMcpTheme } from '@/Shuffle-MCPs/ShuffleMcpThemeProvider';
@@ -990,6 +991,8 @@ export interface AgentUIProps {
    * - Provides independent scroll container for middle content without top clipping
    */
   sidebarLayout?: boolean;
+  /** Element in the host's header (the sidebar's) that the chat renders its bookmark, history and new chat buttons into. */
+  headerActionsContainer?: HTMLElement | null;
   /**
    * Optional callback to transform/compose raw prompt input before submitting to the backend
    * (e.g. pre-injecting dynamic documentation markdown).
@@ -2429,6 +2432,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
   isSupport,
   presetCtas,
   sidebarLayout = false,
+  headerActionsContainer = null,
   composeSubmitInput: propComposeSubmitInput,
   contextParams,
   incidentId: propIncidentId,
@@ -3010,11 +3014,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
         return false;
       }
     }
-    // Chat has its own composer, so it opens without the Start form unless the
-    // user last chose Start here. 'simple' is the retired name for Chat.
-    if (initialView === 'chat' || initialView === 'simple') {
-      return !!contextStorageKey && getPageContextChoice(contextStorageKey)?.viewMode === 'start';
-    }
+    // No run yet: the Start form is the empty state, also for hosts that open in Chat.
     return true;
   });
 
@@ -4010,6 +4010,8 @@ const AgentUI: React.FC<AgentUIProps> = ({
   // Chat sessions: open an earlier run, or clear the current one so the next message starts a new run.
   // Either way the choice is remembered for this page, like any other run.
   const openChatRun = useCallback((eid: string, auth?: string, status?: string) => {
+    userPickedStartRef.current = false;
+    setShowStarter(false);
     activeExecutionIdRef.current = eid;
     setAgentData({});
     setError(null);
@@ -4024,8 +4026,10 @@ const AgentUI: React.FC<AgentUIProps> = ({
     setAgentData({});
     setError(null);
     setPollWarning(null);
+    setActionInput('');
+    setShowStarter(true);
     if (contextStorageKey) {
-      setPageContextChoice(contextStorageKey, { executionId: null, authorization: null, executionStatus: null, viewMode: 'chat' });
+      setPageContextChoice(contextStorageKey, { executionId: null, authorization: null, executionStatus: null, viewMode: 'start' });
     }
     if (readUrlParams) {
       setSearchParams((prev) => {
@@ -5401,13 +5405,14 @@ const AgentUI: React.FC<AgentUIProps> = ({
 
 
   const handlePrimarySubmit = useCallback(() => {
-    const composed = composeSubmitInput(actionInput);
+    let composed = composeSubmitInput(actionInput);
+    if (resolvedWorkflowId && readChatMode() === 'ask') composed = ASK_FIRST_PREFIX + composed;
     if (submitOverride) {
       submitOverride({ input: composed, apps: chosenApps });
     } else {
       submitInput(composed);
     }
-  }, [submitOverride, actionInput, chosenApps, submitInput, composeSubmitInput]);
+  }, [submitOverride, actionInput, chosenApps, submitInput, composeSubmitInput, resolvedWorkflowId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Autocomplete navigation takes priority over the normal submit shortcut
@@ -5786,18 +5791,19 @@ const AgentUI: React.FC<AgentUIProps> = ({
       <SegmentedControl
         layoutId="agentui-view-switcher"
         ariaLabel="Agent view"
-        value={activeTab}
-        onChange={(v) => goToTab(v as TabKey)}
+        value={activeTab === 'chat' ? 'start' : activeTab}
+        onChange={(v) => goToTab(v === 'start' && hasExecution ? 'chat' : v as TabKey)}
         options={[
           {
             value: 'start',
             label: 'Start',
-            disabled: disableStartTab,
-            title: disableStartTab
-              ? 'Open a new agent run from the /agents page to start a new prompt'
-              : 'Write a new prompt and pick the tools to run it with',
+            disabled: disableStartTab && !hasExecution,
+            title: hasExecution
+              ? 'The run as a conversation: ask questions, answer the agent and continue'
+              : disableStartTab
+                ? 'Open a new agent run from the /agents page to start a new prompt'
+                : 'Write a new prompt and pick the tools to run it with',
           },
-          { value: 'chat', label: 'Chat', title: 'The run as a conversation: ask questions, answer the agent and continue' },
           {
             value: 'detailed',
             label: runIsActive ? (
@@ -7775,6 +7781,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
             )}
           </Box>
         ) : viewMode === 'chat' ? (
+          <Box sx={{ display: 'contents', '& > *': { animation: 'agentChatIn 280ms ease-out' }, '@keyframes agentChatIn': { from: { opacity: 0, transform: 'translateY(12px)' }, to: { opacity: 1, transform: 'none' } } }}>
           <AgentChatView
             execution={execution}
             agentData={agentData}
@@ -7785,6 +7792,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
             workflowId={resolvedWorkflowId}
             placeholder={placeholder}
             composerContainer={sidebarLayout ? chatComposerEl : null}
+            headerActionsContainer={headerActionsContainer}
             onStart={(text) => submitInput(text)}
             onSubmit={submitQuestions}
             onStop={safeHandler('Stop', abortAgent)}
@@ -7807,6 +7815,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
             onOpenRun={openChatRun}
             onNewChat={startNewChat}
           />
+          </Box>
         ) : (
           <Box sx={{ pb: sidebarLayout ? 1.5 : '200px' }}>
             {/* Status row */}
