@@ -3233,6 +3233,9 @@ const AgentUI: React.FC<AgentUIProps> = ({
   // suggestions in the picker. NOT auto-selected as `chosenApps`.
   const [availableApps, setAvailableApps] = useState<AgentUIApp[]>([]);
   const [authAppsLoading, setAuthAppsLoading] = useState(autoLoadApps && hasApiKey);
+  // The auth list failed to load: an empty list then says nothing about which apps are authenticated
+  const [authAppsFailed, setAuthAppsFailed] = useState(false);
+  const authUnknown = authAppsLoading || authAppsFailed;
   // Detected LLM provider derived from the saved OpenAI auth's `url` field.
   // Populated by `loadAuthenticatedApps` so the "Choose LLM" chip can show
   // the matching vendor logo and label.
@@ -3661,7 +3664,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
   // 1) Any decisions waiting for or reporting missing auth
   // 2) Any app selected in executionApps or chosenApps that requires auth and is not authenticated
   const pendingAuthApps = useMemo(() => {
-    if (authAppsLoading) return [];
+    if (authUnknown) return [];
     const seen = new Set<string>();
     const out: { appName: string; appId: string | null; icon: string }[] = [];
 
@@ -3697,7 +3700,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
     }
 
     return out;
-  }, [agentData, executionApps, chosenApps, appsById, authAppsLoading, isAppAuthenticated]);
+  }, [agentData, executionApps, chosenApps, appsById, authUnknown, isAppAuthenticated]);
 
   // Sync controlled `apps` prop into local state.
   useEffect(() => {
@@ -3897,9 +3900,10 @@ const AgentUI: React.FC<AgentUIProps> = ({
 
       const resp = authRes.status === 'fulfilled' ? authRes.value : null;
       if (!resp || !resp.ok) {
-        if (!signal?.cancelled) setAvailableApps([]);
+        if (!signal?.cancelled) setAuthAppsFailed(true);
         return;
       }
+      if (!signal?.cancelled) setAuthAppsFailed(false);
       const result = await resp.json();
       const list = Array.isArray(result) ? result : (result?.data || []);
       const seen = new Set<string>();
@@ -3918,9 +3922,10 @@ const AgentUI: React.FC<AgentUIProps> = ({
         // value on one field can never override an explicit negative on
         // another: an untested entry (tested === false) stays connected,
         // while an expired validation (valid === false) is still excluded.
+        // validation.valid is always sent and is false until a check has run, so it only counts once validation_ran is true.
         const explicitlyInvalid =
           entry?.active === false ||
-          entry?.validation?.valid === false ||
+          (entry?.validation?.validation_ran === true && entry?.validation?.valid === false) ||
           entry?.hasValidAuth === false ||
           app?.is_valid === false;
         if (explicitlyInvalid) continue;
@@ -6962,7 +6967,8 @@ const AgentUI: React.FC<AgentUIProps> = ({
           alignItems: 'center',
           justifyContent: sidebarLayout ? 'flex-start' : 'center',
           overflow: sidebarLayout ? 'hidden' : undefined,
-          pb: sidebarLayout ? 0 : (isPhone ? 1 : 4),
+          // The chat sizes itself to the screen and keeps its own space under the composer
+          pb: sidebarLayout || chatVisible ? 0 : (isPhone ? 1 : 4),
           ...(isPhone && showStarter && !sidebarLayout ? { flex: 1, minHeight: 0, alignItems: 'center', justifyContent: 'center' } : {}),
         },
         ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
@@ -7003,6 +7009,9 @@ const AgentUI: React.FC<AgentUIProps> = ({
             px: sidebarLayout ? 1.5 : 0,
             pb: sidebarLayout ? 1.5 : 0,
             ...(isPhone && showStarter && !sidebarLayout ? { flex: 1, justifyContent: 'center' } : {}),
+            // The drawers' theme wrappers after the chat are empty in the layout (the drawers open in a
+            // portal) but each still added a 24px gap, so the page scrolled under the chat's composer
+            ...(chatVisible && !sidebarLayout ? { '& > .shuffle-core-scope': { position: 'absolute', width: 0, height: 0 } } : {}),
           },
           ...(Array.isArray(contentSx) ? contentSx : contentSx ? [contentSx] : []),
         ]}
@@ -8202,6 +8211,7 @@ const AgentUI: React.FC<AgentUIProps> = ({
               if (execution?.execution_id) getExecution(execution.execution_id, execution.authorization);
             }}
             isAppAuthenticated={isAppAuthenticated}
+            authUnknown={authUnknown}
             onAuthenticateApp={(app) => {
               if (renderAppDetailDrawer) {
                 setAuthDrawerApp({ name: app.name, id: app.id, focusAuth: true });
